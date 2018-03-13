@@ -1,0 +1,24 @@
+name: vendorize
+version: 0.1
+summary: Vendorize a given snap
+description: |
+  A given snap will be prepared to vendorize all dependencies pulled
+  in from sources outside the allowed hosts effectively creating stable
+  branches to make rebuilds safe.
+
+grade: devel
+confinement: classic
+
+apps:
+  vendorize:
+    command: bin/vendorize
+
+parts:
+  vendorize:
+    plugin: python
+    requirements: requirements.txt
+
+  bin:
+    plugin: dump
+    stage:
+      - bin/vendorize
