@@ -38,12 +38,15 @@ class Processor:
                  allowed_hosts: List[str],
                  dry_run: bool, debug: bool) -> None:
         self.project_folder = project_folder
-        if not target:
-            target = 'git+ssh://git.launchpad.net/~kalikiana'
         self.target = target
+        self.clone_url = target.replace('git+ssh://', 'https://')
         self.allowed_hosts = allowed_hosts
         self.dry_run = dry_run
         self.debug = debug
+
+        if self.host_not_vendorized(self.target):
+            raise click.UsageError(
+                '{!r} is not in the allowed hosts'.format(self.clone_url))
 
     @contextmanager
     def discover_snapcraft_yaml(self):
@@ -167,7 +170,7 @@ class Processor:
                                   commit='Vendor {}'.format(package))
 
     def upload_source(self, path, copy, commit=None):
-        source_schema = '{}/{}'.format(self.target, path[0])
+        source_schema = self.target
         branch = '_'.join(path)
         if self.debug:
             click.secho('* Uploading {!r} to {!r}'.format(copy, source_schema),
@@ -180,7 +183,7 @@ class Processor:
                 subprocess.check_call(['git', 'commit', '--allow-empty',
                                        '-m', commit])
             subprocess.check_call(['git', 'push', '-u', source_schema, branch])
-        return '{}@{}'.format(self.target, branch)
+        return '{}@{}'.format(self.clone_url, branch)
 
     def packages_from_setup_py(self, setup_py):
         if not os.path.exists(setup_py):
