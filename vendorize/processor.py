@@ -17,9 +17,9 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 import click
-# from launchpadlib.launchpad import Launchpad
+import contextlib
+import importlib
 import yaml
-# import requests
 from urllib.parse import urlparse
 import os
 import shutil
@@ -28,8 +28,8 @@ import sys
 from contextlib import contextmanager
 from typing import List
 
-# launchpad = Launchpad.login_anonymously(
-#     'snapcraft-yaml-usage', 'production', version='devel')
+
+import vendorize.git
 
 
 class Processor:
@@ -43,6 +43,9 @@ class Processor:
         self.allowed_hosts = allowed_hosts
         self.dry_run = dry_run
         self.debug = debug
+
+        self.git = vendorize.git.Git(self)
+        self.branches = {}  # type: dict
 
         if self.host_not_vendorized(self.target):
             raise click.UsageError(
@@ -85,8 +88,10 @@ class Processor:
             self.die('Path {!r} is not relative'.format(path))
         with open(os.path.join(vendored_source, path), 'w') as f:
             yaml.dump(data, f, default_flow_style=False)
-            self.upload_source([data['name']], vendored_source,
-                               commit='Vendor {}'.format(data['name']))
+            self.prepare_source([data['name']], vendored_source,
+                                commit='Vendor {}'.format(data['name']))
+        for branch in self.branches:
+            self.git.upload_branch(self.branches[branch], branch)
 
     def process_part(self, part, part_data, data):
         source = part_data.get('source', '.')
@@ -96,23 +101,32 @@ class Processor:
             if self.debug:
                 click.secho('Source: {!r}'.format(source), fg='blue')
             if not self.dry_run and not os.path.exists(source_copy):
-                if False and 'git' in source:
+                if 'git' in source:
                     os.makedirs(source_copy)
-                    subprocess.check_call(['git', 'clone',
-                                           source, source_copy])
-                else:
+                    self.git.clone(source, source_copy)
+                elif os.getenv('SNAP_NAME') != 'vendorize':
                     os.chdir(self.project_folder)
                     subprocess.check_call(['snapcraft', 'pull', part])
-            part_data['source'] = self.upload_source(
+                else:
+                    self.die("Unsupported source {!r}".format(source))
+            part_data['source'] = self.prepare_source(
                 [data['name'], part], source_copy)
-        # FIXME: plugin is required BUT we're not parsing remote parts
-        plugin = part_data.get('plugin', 'nil')
-        if plugin in ['python', 'python2', 'python3']:
-            part_data['python-packages'] = self.process_python(
-                data, part, source,
-                os.path.join(self.project_folder, 'parts', part))
-        elif plugin not in ['copy', 'dump', 'nil']:
-            self.die("No vendoring for {!r}".format(plugin))
+        plugin = part_data.get('plugin')
+        if plugin:
+            part_processor = self.load_plugin(plugin, data, part, source)
+            if part_processor:
+                part_data['python-packages'] = part_processor.process()
+            elif plugin not in ['copy', 'dump', 'nil']:
+                self.die("No vendoring for {!r}".format(plugin))
+        else:
+            self.die("No vendoring for remote parts")
+
+    def load_plugin(self, plugin: str, data: dict, part: str, source: str):
+        with contextlib.suppress(ImportError):
+            module = importlib.import_module('vendorize.plugins.' + plugin)
+            for v in vars(module).values():
+                if isinstance(v, type):
+                    return v(self, part, data['parts'][part], source)
 
     def die(self, message):
         print()
@@ -124,7 +138,6 @@ class Processor:
         with click.progressbar(os.listdir(path=source), label='Copying folder',
                                item_show_func=lambda x: x) as bar:
             for f in bar:
-                # FIXME: Hack to avoid infinitely recursing into snap/vendoring
                 if f == 'snap':
                     continue
                 a = os.path.join(source, f)
@@ -134,86 +147,16 @@ class Processor:
                 else:
                     shutil.copy(a, b)
 
-    def process_python(self, data, part, source, source_copy):
-        branches = []
-        part_data = data['parts'][part]
-        python_packages = part_data.get('python-packages', [])
-        requirements = part_data.get('requirements')
-        if requirements:
-            if self.host_not_vendorized(requirements):
-                if self.debug:
-                    # FIXME
-                    click.secho('* Requirements need to be moved', fg='yellow')
-            with open(requirements) as r:
-                for line in r:
-                    package = line.strip().split()[-1]
-                    python_packages.append(package)
-        self.packages_from_setup_py(os.path.join(source, 'setup.py'))
-        if python_packages:
-            python_cache = os.path.join(source_copy, 'python-packages')
-            for package in python_packages:
-                branch = self.upload_python_package(
-                    [data['name'], part, 'python-packages', package],
-                    os.path.join(python_cache, package))
-                branches.append(branch)
-        return branches
-
-    def upload_python_package(self, path, copy):
-        package = path[-1]
-        if not self.dry_run:
-            if not os.path.exists(copy):
-                os.makedirs(copy)
-            subprocess.check_call(['pip', 'download', '-d', copy, package])
-            os.chdir(copy)
-            subprocess.check_call(['git', 'init'])
-        return self.upload_source(path, copy,
-                                  commit='Vendor {}'.format(package))
-
-    def upload_source(self, path, copy, commit=None):
-        source_schema = self.target
+    def prepare_source(self, path: list, copy: str,
+                       *, init=False, commit: str=None):
         branch = '_'.join(path)
+        source_schema = '{}@{}'.format(self.clone_url, branch)
         if self.debug:
-            click.secho('* Uploading {!r} to {!r}'.format(copy, source_schema),
-                        fg='yellow')
+            click.secho('Preparing {!r}'.format(copy), fg='yellow')
         if not self.dry_run:
-            os.chdir(copy)
-            subprocess.check_call(['git', 'checkout', '-B', branch])
-            if commit:
-                subprocess.check_call(['git', 'add', '--all'])
-                subprocess.check_call(['git', 'commit', '--allow-empty',
-                                       '-m', commit])
-            subprocess.check_call(['git', 'push', '-u', source_schema, branch])
-        return '{}@{}'.format(self.clone_url, branch)
-
-    def packages_from_setup_py(self, setup_py):
-        if not os.path.exists(setup_py):
-            return
-
-        # Try using setuptools to get install_requires
-        import setuptools
-
-        def setup(*args, **kwargs):
-            # FIXME
-            print('setup: {!r}'.format(kwargs))
-        setuptools.setup = setup
-        try:
-            setup_py_code = open(setup_py.read())
-            exec(setup_py_code)
-        except Exception as e:
-            try:
-                stripped_code = ''
-                for line in open(setup_py):
-                    if 'import' not in line:
-                        stripped_code += line
-            except Exception as e:
-                # Fallback to manual scraping for install_requires
-                import re
-                packages = re.search(r"^install_requires=['\"]([^'\"]*)['\"]",
-                                     setup_py_code, re.M)
-                if packages:
-                    click.secho(packages.group(1), fg='purple')
-                else:
-                    self.die('Failed to parse {!r}: {}'.format(setup_py, e))
+            self.git.prepare_branch(copy, branch, init=init, commit=commit)
+        self.branches[branch] = copy
+        return source_schema
 
     def host_not_vendorized(self, location):
         url = urlparse(location)
