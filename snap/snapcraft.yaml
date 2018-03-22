@@ -7,16 +7,26 @@ description: |
   branches to make rebuilds safe.
 
 grade: devel
-confinement: classic
+confinement: strict
 
 apps:
   vendorize:
     command: bin/vendorize
+    plugs: [home, network]
+    environment:
+      PATH: $PATH:$SNAP/usr/lib/git-core
+      GIT_TEMPLATE_DIR: $SNAP/usr/share/git-core/templates
 
 parts:
   vendorize:
     plugin: python
     requirements: requirements.txt
+
+  tools:
+    plugin: nil
+    stage-packages:
+     - git
+     - openssh-client
 
   bin:
     plugin: dump
