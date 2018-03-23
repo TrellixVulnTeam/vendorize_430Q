@@ -29,6 +29,16 @@ class Git:
         else:
             self.processor.die('You need to set REAL_NAME and EMAIL_ADDRESS')
 
+        try:
+            os.listdir('/home/{}/.ssh'.format(os.getenv('USER')))
+        except PermissionError:
+            if os.getenv('SNAP_NAME') == 'vendorize':
+                self.processor.die(
+                    'Please run "sudo snap connect {}:ssh-keys"'.format(
+                        os.getenv('SNAP_NAME')))
+            else:
+                self.processor.die('No SSH configuration found')
+
     def clone(self, source: str, folder: str):
         try:
             subprocess.check_call(['git', 'clone', source, folder])

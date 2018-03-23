@@ -12,10 +12,12 @@ confinement: strict
 apps:
   vendorize:
     command: bin/vendorize
-    plugs: [home, network]
+    plugs: [home, network, ssh-keys]
     environment:
       PATH: $PATH:$SNAP/usr/lib/git-core
       GIT_TEMPLATE_DIR: $SNAP/usr/share/git-core/templates
+      # Under confinement multiplexing SSH sessions won't work
+      GIT_SSH_COMMAND: ssh -o ControlMaster=no
 
 parts:
   vendorize:
@@ -26,7 +28,6 @@ parts:
     plugin: nil
     stage-packages:
      - git
-     - openssh-client
 
   bin:
     plugin: dump
