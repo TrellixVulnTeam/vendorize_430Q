@@ -19,17 +19,18 @@
 import click
 import contextlib
 import importlib
+import logging
 import yaml
 from urllib.parse import urlparse
 import os
 import shutil
 import subprocess
-import sys
 from contextlib import contextmanager
 from typing import List
 
 
 import vendorize.git
+import vendorize.log
 
 
 class Processor:
@@ -42,7 +43,10 @@ class Processor:
         self.clone_url = target.replace('git+ssh://', 'https://')
         self.allowed_hosts = allowed_hosts
         self.dry_run = dry_run
-        self.debug = debug
+
+        self.logger = vendorize.log.get_logger(__name__)
+        if debug:
+            self.logger.setLevel(logging.DEBUG)
 
         self.git = vendorize.git.Git(self)
         self.branches = {}  # type: dict
@@ -61,7 +65,7 @@ class Processor:
                 return
         self.die('No snapcraft.yaml found')
 
-    def process_yaml(self, path):
+    def process_yaml(self, path: str):
         vendoring = os.path.join(self.project_folder, 'snap', 'vendoring')
         os.makedirs(vendoring, exist_ok=True)
         vendored_source = os.path.join(self.project_folder,
@@ -71,9 +75,11 @@ class Processor:
                         exist_ok=True)
             self.copy_source(self.project_folder, vendored_source)
 
-        with open(path) as f:
+        if os.path.isabs(path):
+            self.die('Path {!r} is not relative'.format(path))
+        with open(os.path.join(self.project_folder, path)) as f:
             data = yaml.load(f)
-            click.secho('Processing {!r}...'.format(path), fg='green')
+            self.logger.info('Processing {!r}'.format(path))
             # Allowed hosts for this snap
             self.allowed_hosts = data.get('vendoring', self.allowed_hosts)
             data['vendoring'] = self.allowed_hosts
@@ -83,9 +89,7 @@ class Processor:
                 for part in bar:
                     self.process_part(part, parts[part], data)
 
-        click.secho('Preparing project'.format(path), fg='green')
-        if os.path.isabs(path):
-            self.die('Path {!r} is not relative'.format(path))
+        self.logger.info('Preparing project')
         with open(os.path.join(vendored_source, path), 'w') as f:
             yaml.dump(data, f, default_flow_style=False)
             self.prepare_source([data['name']], vendored_source,
@@ -95,18 +99,19 @@ class Processor:
 
     def process_part(self, part, part_data, data):
         source = part_data.get('source', '.')
+        if source.startswith('.'):
+            source = os.path.join(self.project_folder, source)
         source_copy = os.path.join(self.project_folder,
                                    'parts', part, 'src')
         if self.host_not_vendorized(source):
-            if self.debug:
-                click.secho('Source: {!r}'.format(source), fg='blue')
+            self.logger.debug('Source: {!r}'.format(source))
             if not self.dry_run and not os.path.exists(source_copy):
                 if 'git' in source:
                     os.makedirs(source_copy)
                     self.git.clone(source, source_copy)
                 elif os.getenv('SNAP_NAME') != 'vendorize':
-                    os.chdir(self.project_folder)
-                    subprocess.check_call(['snapcraft', 'pull', part])
+                    with self.chdir(self.project_folder):
+                        subprocess.check_call(['snapcraft', 'pull', part])
                 else:
                     self.die("Unsupported source {!r}".format(source))
             part_data['source'] = self.prepare_source(
@@ -115,11 +120,20 @@ class Processor:
         if plugin:
             part_processor = self.load_plugin(plugin, data, part, source)
             if part_processor:
-                part_data['python-packages'] = part_processor.process()
+                part_processor.process()
             elif plugin not in ['copy', 'dump', 'nil']:
                 self.die("No vendoring for {!r}".format(plugin))
         else:
             self.die("No vendoring for remote parts")
+
+    @contextlib.contextmanager
+    def chdir(self, path: str):
+        cwd = os.getcwd()
+        os.chdir(path)
+        try:
+            yield path
+        finally:
+            os.chdir(cwd)
 
     def load_plugin(self, plugin: str, data: dict, part: str, source: str):
         with contextlib.suppress(ImportError):
@@ -129,9 +143,7 @@ class Processor:
                     return v(self, part, data['parts'][part], source)
 
     def die(self, message):
-        print()
-        click.secho('Error: {}'.format(message), fg='red')
-        sys.exit(1)
+        raise click.ClickException(message)
 
     def copy_source(self, source, destination):
         os.makedirs(destination, exist_ok=True)
@@ -151,8 +163,7 @@ class Processor:
                        *, init=False, commit: str=None):
         branch = '_'.join(path)
         source_schema = '{}@{}'.format(self.clone_url, branch)
-        if self.debug:
-            click.secho('Preparing {!r}'.format(copy), fg='yellow')
+        self.logger.debug('Preparing {!r}'.format(copy))
         if not self.dry_run:
             self.git.prepare_branch(copy, branch, init=init, commit=commit)
         self.branches[branch] = copy

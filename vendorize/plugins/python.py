@@ -26,9 +26,8 @@ class Python:
         requirements = self.data.get('requirements')
         if requirements:
             if self.processor.host_not_vendorized(requirements):
-                if self.debug:
-                    self.processor.die(
-                        'External requirements are not supported')
+                self.processor.die(
+                    'External requirements are not supported')
             with open(os.path.join(
                     self.processor.project_folder, requirements)) as r:
                 for line in r:
@@ -42,7 +41,7 @@ class Python:
                 branch = self.upload_python_package(
                     [self.part, 'python_packages', package], python_cache)
                 branches.append(branch)
-        return branches
+        self.data['python-packages'] = branches
 
     def upload_python_package(self, path: list, python_cache: str):
         url = path[-1]
@@ -63,8 +62,7 @@ class Python:
             path, copy, init=True, commit='Vendor {}'.format(package))
 
     def packages_from_setup_py(self):
-        setup_py = os.path.join(self.processor.project_folder,
-                                self.source, 'setup.py')
+        setup_py = os.path.join(self.source, 'setup.py')
         if not os.path.exists(setup_py):
             return []
 
@@ -73,10 +71,11 @@ class Python:
             globals()['metadata'] = kwargs
         setuptools.setup = setup
         try:
-            setup_py_code = open(setup_py).read()
-            exec(setup_py_code)
-            metadata = globals()['metadata']
-            return metadata.get('install_requires', [])
+            with open(setup_py) as f:
+                with self.processor.chdir(self.source):
+                    exec(f.read())
+                    metadata = globals()['metadata']
+                    return metadata.get('install_requires', [])
         except Exception as e:
             self.processor.die(
                 'Failed to parse {!r}: {}'.format(setup_py, e))

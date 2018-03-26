@@ -1,0 +1,4 @@
+fixtures==3.0.0
+testscenarios==0.5.0
+mypy==0.560
+codespell==1.11.0

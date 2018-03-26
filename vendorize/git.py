@@ -1,4 +1,3 @@
-import click
 import os
 import subprocess
 
@@ -47,27 +46,26 @@ class Git:
 
     def prepare_branch(self, folder: str, branch: str,
                        *, init=False, commit: str=None):
-        os.chdir(folder)
         try:
-            if init:
-                subprocess.check_call(['git', 'init'])
-            subprocess.check_call(['git', 'checkout', '-B', branch])
-            if commit:
-                self.set_identity()
-                subprocess.check_call(['git', 'add', '--all'])
-                subprocess.check_call(['git', 'commit', '--allow-empty',
-                                       '-m', commit])
+            with self.processor.chdir(folder):
+                if init:
+                    subprocess.check_call(['git', 'init'])
+                subprocess.check_call(['git', 'checkout', '-B', branch])
+                if commit:
+                    self.set_identity()
+                    subprocess.check_call(['git', 'add', '--all'])
+                    subprocess.check_call(['git', 'commit', '--allow-empty',
+                                           '-m', commit])
         except subprocess.CalledProcessError as e:
             self.processor.die('{}'.format(' '.join(e.cmd)))
 
     def upload_branch(self, folder: str, branch: str):
-        os.chdir(folder)
-        if self.processor.debug:
-            click.secho('Uploading {!r}'.format(branch), fg='blue')
+        self.processor.logger.debug('Uploading {!r}'.format(branch))
         try:
             if not self.processor.dry_run:
-                subprocess.check_call(['git', 'push', '-u',
-                                       self.processor.target, branch])
+                with self.processor.chdir(folder):
+                    subprocess.check_call(['git', 'push', '-u',
+                                           self.processor.target, branch])
         except subprocess.CalledProcessError as e:
             self.processor.die('{}'.format(' '.join(e.cmd)))
 

@@ -67,7 +67,6 @@ def run(dry_run, debug, target_repository, project_folder, host):
         vendorize -h git.launchpad.net git+ssh://git.launchpad.net/~user
     """
 
-    os.chdir(project_folder)
     processor = vendorize.processor.Processor(
         project_folder=os.path.abspath(project_folder),
         target=target_repository,
