@@ -36,10 +36,11 @@ class ProcessorBaseTestCase(testscenarios.WithScenarios, testtools.TestCase):
 
     def make_processor(self, *,
                        target='git+ssh://git.launchpad.net/~user/test',
-                       allowed_hosts=['git.launchpad.net']):
+                       allowed_hosts=['git.launchpad.net'],
+                       dry_run=True):
         return vendorize.processor.Processor(
             project_folder=os.getcwd(),
             target=target,
             allowed_hosts=allowed_hosts,
-            dry_run=True,
+            dry_run=dry_run,
             debug=False)

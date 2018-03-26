@@ -68,8 +68,7 @@ class Processor:
     def process_yaml(self, path: str):
         vendoring = os.path.join(self.project_folder, 'snap', 'vendoring')
         os.makedirs(vendoring, exist_ok=True)
-        vendored_source = os.path.join(self.project_folder,
-                                       'snap', 'vendoring', 'src')
+        vendored_source = os.path.join(vendoring, 'src')
         if not os.path.exists(vendored_source):
             os.makedirs(os.path.join(vendored_source, os.path.dirname(path)),
                         exist_ok=True)
@@ -92,7 +91,7 @@ class Processor:
         self.logger.info('Preparing project')
         with open(os.path.join(vendored_source, path), 'w') as f:
             yaml.dump(data, f, default_flow_style=False)
-            self.prepare_source([data['name']], vendored_source,
+            self.prepare_source(['master'], vendored_source,
                                 commit='Vendor {}'.format(data['name']))
         for branch in self.branches:
             self.git.upload_branch(self.branches[branch], branch)

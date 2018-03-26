@@ -1,7 +1,10 @@
+from unittest.mock import patch, call
+import os
 import textwrap
 
 
 import fixture_setup
+import vendorize.plugins.python
 
 
 class PythonPartTestCase(fixture_setup.ProcessorBaseTestCase):
@@ -30,10 +33,14 @@ class PythonPartTestCase(fixture_setup.ProcessorBaseTestCase):
         super().setUp()
         self.part_data['plugin'] = 'python'
         self.part_data['python-packages'] = self.packages
-        self.processor = self.make_processor()
+        self.processor = self.make_processor(dry_run=False)
         self.plugin = self.processor.load_plugin(
             self.part_data['plugin'], self.data, 'test',
             self.part_data.get('source', '.'))
+        self.all_packages = self.packages + self.requirements
+        if self.setup_py:
+            self.all_packages += self.setup_py
+        self.all_packages = self.all_packages
         self.branches = [branch.format(url=self.processor.clone_url)
                          for branch in self.branches]
         if self.requirements:
@@ -57,6 +64,28 @@ class PythonPartTestCase(fixture_setup.ProcessorBaseTestCase):
                     )
                     '''.format(install_requires)))
 
-    def test_process(self):
+    def test_get_packages(self):
+        self.assertEqual(self.plugin.get_packages(), self.all_packages)
+
+    @patch.object(vendorize.git.Git, 'prepare_branch')
+    @patch.object(vendorize.plugins.python.Python, 'download_packages')
+    @patch('shutil.unpack_archive')
+    @patch('os.path.isdir')
+    @patch('os.listdir')
+    def test_process(self, mock_listdir, mock_isdir,
+                     mock_unpack, mock_download, mock_git):
+        folders = [a for a in self.all_packages]
+        non_git_packages = self.packages + (self.setup_py or [])
+        for requirement in self.requirements:
+            if '#egg=' not in requirement:
+                non_git_packages.append(requirement)
+            folders.append(requirement.split('#egg=')[-1])
+        archives = ['{}.tar.gz'.format(a) for a in non_git_packages]
+        mock_listdir.return_value = folders + archives
+        mock_isdir.side_effect = lambda x: not x.endswith('.tar.gz')
         self.plugin.process()
-        self.assertEqual(self.part_data['python-packages'], self.branches)
+        mock_download.assert_has_calls([call(self.all_packages)])
+        mock_unpack.assert_has_calls([
+            call(os.path.join(self.plugin.python_cache, archive),
+                 self.plugin.python_cache) for archive in archives])
+        self.assertEqual(self.part_data.get('requirements'), None)
