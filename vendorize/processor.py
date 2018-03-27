@@ -55,6 +55,11 @@ class Processor:
             raise click.UsageError(
                 '{!r} is not in the allowed hosts'.format(self.clone_url))
 
+        self.vendored_source = os.path.join(
+            self.project_folder, 'snap', 'vendoring', 'src')
+        if not self.dry_run:
+            os.makedirs(self.vendored_source, exist_ok=True)
+
     @contextmanager
     def discover_snapcraft_yaml(self):
         # Known snapcraft.yaml file locations
@@ -66,13 +71,8 @@ class Processor:
         self.die('No snapcraft.yaml found')
 
     def process_yaml(self, path: str):
-        vendoring = os.path.join(self.project_folder, 'snap', 'vendoring')
-        os.makedirs(vendoring, exist_ok=True)
-        vendored_source = os.path.join(vendoring, 'src')
-        if not os.path.exists(vendored_source):
-            os.makedirs(os.path.join(vendored_source, os.path.dirname(path)),
-                        exist_ok=True)
-            self.copy_source(self.project_folder, vendored_source)
+        if not self.dry_run and not os.listdir(self.vendored_source):
+            self.copy_source(self.project_folder, self.vendored_source)
 
         if os.path.isabs(path):
             self.die('Path {!r} is not relative'.format(path))
@@ -89,9 +89,11 @@ class Processor:
                     self.process_part(part, parts[part], data)
 
         self.logger.info('Preparing project')
-        with open(os.path.join(vendored_source, path), 'w') as f:
+        if self.dry_run:
+            return
+        with open(os.path.join(self.vendored_source, path), 'w') as f:
             yaml.dump(data, f, default_flow_style=False)
-            self.prepare_source(['master'], vendored_source,
+            self.prepare_source(['master'], self.vendored_source,
                                 commit='Vendor {}'.format(data['name']))
         for branch in self.branches:
             self.git.upload_branch(self.branches[branch], branch)
@@ -99,10 +101,11 @@ class Processor:
     def process_part(self, part, part_data, data):
         source = part_data.get('source', '.')
         if source.startswith('.'):
+            source_copy = os.path.join(self.vendored_source, source)
             source = os.path.join(self.project_folder, source)
-        source_copy = os.path.join(self.project_folder,
-                                   'parts', part, 'src')
-        if self.host_not_vendorized(source):
+        elif self.host_not_vendorized(source):
+            source_copy = os.path.join(self.project_folder,
+                                       'parts', part, 'src')
             self.logger.debug('Source: {!r}'.format(source))
             if not self.dry_run and not os.path.exists(source_copy):
                 if 'git' in source:
@@ -113,13 +116,21 @@ class Processor:
                         subprocess.check_call(['snapcraft', 'pull', part])
                 else:
                     self.die("Unsupported source {!r}".format(source))
-            part_data['source'] = self.prepare_source(
-                [data['name'], part], source_copy)
+            repo, branch = self.prepare_source(
+                [data['name'], part], source_copy).split('@')
+            part_data['source'] = repo
+            part_data['source-branch'] = branch
+        else:
+            self.die('Unsupported source {!r}'.format(source))
         plugin = part_data.get('plugin')
         if plugin:
-            part_processor = self.load_plugin(plugin, data, part, source)
+            part_processor = self.load_plugin(
+                plugin, data, part, source, source_copy)
             if part_processor:
                 part_processor.process()
+                self.prepare_source(
+                    [data['name'], part], source_copy,
+                    commit='Update requirements')
             elif plugin not in ['copy', 'dump', 'nil']:
                 self.die("No vendoring for {!r}".format(plugin))
         else:
@@ -134,12 +145,13 @@ class Processor:
         finally:
             os.chdir(cwd)
 
-    def load_plugin(self, plugin: str, data: dict, part: str, source: str):
+    def load_plugin(self, plugin: str, data: dict, part: str,
+                    source: str, copy: str):
         with contextlib.suppress(ImportError):
             module = importlib.import_module('vendorize.plugins.' + plugin)
             for v in vars(module).values():
                 if isinstance(v, type):
-                    return v(self, part, data['parts'][part], source)
+                    return v(self, part, data['parts'][part], source, copy)
 
     def die(self, message):
         raise click.ClickException(message)

@@ -38,4 +38,5 @@ class PartTestCase(fixture_setup.ProcessorBaseTestCase):
         self.make_processor().process_part(
             'test', self.part_data, self.data)
         self.assertEqual(self.part_data['source'],
-                         'https://git.launchpad.net/~user/test@test_test')
+                         'https://git.launchpad.net/~user/test')
+        self.assertEqual(self.part_data['source-branch'], 'test_test')

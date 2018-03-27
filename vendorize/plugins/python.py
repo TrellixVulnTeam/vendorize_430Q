@@ -9,11 +9,12 @@ import vendorize.processor
 
 class Python:
     def __init__(self, processor: vendorize.processor.Processor,
-                 part: str, data: dict, source: str) -> None:
+                 part: str, data: dict, source: str, copy: str) -> None:
         self.processor = processor
         self.part = part
         self.data = data
         self.source = source
+        self.copy = copy
 
         if os.getenv('SNAP_NAME') == 'vendorize':
             # Override user agent to avoid pip searching /etc for release files
@@ -77,9 +78,13 @@ class Python:
                 branches.append('git+{}'.format(self.processor.prepare_source(
                     path, copy, init=True,
                     commit='Vendor {}'.format(package))))
-        self.data['python-packages'] = branches
-        if 'requirements' in self.data:
-            del self.data['requirements']
+        filename = os.path.join(self.copy, 'requirements.txt')
+        with open(filename, 'w') as f:
+            for requirement in branches:
+                f.write('{}\n'.format(requirement))
+        self.data['requirements'] = 'requirements.txt'
+        if 'python-packages' in self.data:
+            del self.data['python-packages']
 
     def packages_from_setup_py(self):
         setup_py = os.path.join(self.source, 'setup.py')

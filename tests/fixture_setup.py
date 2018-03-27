@@ -1,6 +1,7 @@
 import testscenarios
 import testtools
 import os
+import shutil
 import tempfile
 import yaml
 
@@ -13,8 +14,10 @@ class ProcessorBaseTestCase(testscenarios.WithScenarios, testtools.TestCase):
     def setUp(self):
         super().setUp()
 
+        tmpdir = tempfile.mkdtemp(dir=os.environ.get('TMPDIR'))
+        self.addCleanup(shutil.rmtree, tmpdir)
         self.addCleanup(os.chdir, os.getcwd())
-        os.chdir(tempfile.mkdtemp(dir=os.environ.get('TMPDIR')))
+        os.chdir(tmpdir)
 
         # Create test snap
         os.makedirs(os.path.join(os.getcwd(), 'snap'))

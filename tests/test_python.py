@@ -36,7 +36,8 @@ class PythonPartTestCase(fixture_setup.ProcessorBaseTestCase):
         self.processor = self.make_processor(dry_run=False)
         self.plugin = self.processor.load_plugin(
             self.part_data['plugin'], self.data, 'test',
-            self.part_data.get('source', '.'))
+            self.part_data.get('source', '.'),
+            os.path.join(self.processor.vendored_source, '.'))
         self.all_packages = self.packages + self.requirements
         if self.setup_py:
             self.all_packages += self.setup_py
@@ -88,4 +89,6 @@ class PythonPartTestCase(fixture_setup.ProcessorBaseTestCase):
         mock_unpack.assert_has_calls([
             call(os.path.join(self.plugin.python_cache, archive),
                  self.plugin.python_cache) for archive in archives])
-        self.assertEqual(self.part_data.get('requirements'), None)
+        self.assertEqual(self.part_data.get('python-packages'), None)
+        self.assertEqual(self.part_data.get('requirements'),
+                         'requirements.txt')
