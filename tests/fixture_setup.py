@@ -26,11 +26,13 @@ class ProcessorBaseTestCase(testscenarios.WithScenarios, testtools.TestCase):
             'version': '0.1',
             'parts': {
                 'test': {
-                    'plugin': 'nil',
                 }
             },
         }
-        self.part_data = self.data['parts']['test']
+        # Allow subclasses to override
+        if not hasattr(self, 'part_data'):
+            self.part_data = {'plugin': 'nil'}
+        self.data['parts']['test'] = self.part_data
         self.snapcraft_yaml = os.path.join(
             os.getcwd(), 'snap', 'snapcraft.yaml')
         with open(self.snapcraft_yaml, 'w') as snapcraft_yaml_file:

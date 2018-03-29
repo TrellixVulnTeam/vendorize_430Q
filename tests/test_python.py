@@ -45,7 +45,10 @@ class PythonPartTestCase(fixture_setup.ProcessorBaseTestCase):
         self.branches = [branch.format(url=self.processor.clone_url)
                          for branch in self.branches]
         if self.requirements:
-            with open('requirements.txt', 'w') as f:
+            path = os.path.join(self.plugin.part_dir,
+                                'src', 'requirements.txt')
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w') as f:
                 for requirement in self.requirements:
                     f.write('{}\n'.format(requirement))
             self.part_data['requirements'] = 'requirements.txt'

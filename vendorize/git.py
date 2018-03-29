@@ -1,14 +1,13 @@
+import click
 import os
 import subprocess
 
 
-import vendorize.processor  # noqa: F401
+import vendorize.util
 
 
 class Git:
-    def __init__(self, processor: 'vendorize.processor.Processor') -> None:
-        self.processor = processor
-
+    def __init__(self) -> None:
         name = os.getenv('REAL_NAME')
         email = os.getenv('EMAIL_ADDRESS')
         if not (name and email):
@@ -26,28 +25,32 @@ class Git:
             self.name = name
             self.email = email
         else:
-            self.processor.die('You need to set REAL_NAME and EMAIL_ADDRESS')
+            raise click.ClickException(
+                'You need to set REAL_NAME and EMAIL_ADDRESS')
 
         try:
             os.listdir('/home/{}/.ssh'.format(os.getenv('USER')))
         except PermissionError:
             if os.getenv('SNAP_NAME') == 'vendorize':
-                self.processor.die(
+                raise click.ClickException(
                     'Please run "sudo snap connect {}:ssh-keys"'.format(
                         os.getenv('SNAP_NAME')))
             else:
-                self.processor.die('No SSH configuration found')
+                raise click.ClickException('No SSH configuration found')
 
-    def clone(self, source: str, folder: str):
+    def clone(self, source: str, folder: str, branch: str=None):
         try:
-            subprocess.check_call(['git', 'clone', source, folder])
+            cmd = ['git', 'clone', '--recursive', source, folder]
+            if branch:
+                cmd += ['--branch', branch]
+            subprocess.check_call(cmd)
         except subprocess.CalledProcessError as e:
-            self.processor.die('{}'.format(' '.join(e.cmd)))
+            raise click.ClickException(' '.join(e.cmd))
 
     def prepare_branch(self, folder: str, branch: str,
                        *, init=False, commit: str=None):
         try:
-            with self.processor.chdir(folder):
+            with vendorize.util.chdir(folder):
                 if init:
                     subprocess.check_call(['git', 'init'])
                 subprocess.check_call(['git', 'checkout', '-B', branch])
@@ -57,17 +60,15 @@ class Git:
                     subprocess.check_call(['git', 'commit', '--allow-empty',
                                            '-m', commit])
         except subprocess.CalledProcessError as e:
-            self.processor.die('{}'.format(' '.join(e.cmd)))
+            raise click.ClickException(' '.join(e.cmd))
 
-    def upload_branch(self, folder: str, branch: str):
-        self.processor.logger.debug('Uploading {!r}'.format(branch))
+    def upload_branch(self, folder: str, branch: str, target: str):
         try:
-            if not self.processor.dry_run:
-                with self.processor.chdir(folder):
-                    subprocess.check_call(['git', 'push', '-u',
-                                           self.processor.target, branch])
+            with vendorize.util.chdir(folder):
+                subprocess.check_call(['git', 'push', '-u',
+                                       target, branch])
         except subprocess.CalledProcessError as e:
-            self.processor.die('{}'.format(' '.join(e.cmd)))
+            raise click.ClickException(' '.join(e.cmd))
 
     def set_identity(self):
         subprocess.check_call(['git', 'config', '--global',

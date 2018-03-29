@@ -21,16 +21,13 @@ import contextlib
 import importlib
 import logging
 import yaml
-from urllib.parse import urlparse
 import os
-import shutil
-import subprocess
-from contextlib import contextmanager
 from typing import List
 
 
 import vendorize.git
 import vendorize.log
+import vendorize.source
 
 
 class Processor:
@@ -48,10 +45,10 @@ class Processor:
         if debug:
             self.logger.setLevel(logging.DEBUG)
 
-        self.git = vendorize.git.Git(self)
+        self.git = vendorize.git.Git()
         self.branches = {}  # type: dict
 
-        if self.host_not_vendorized(self.target):
+        if vendorize.util.host_not_vendorized(self.target, self.allowed_hosts):
             raise click.UsageError(
                 '{!r} is not in the allowed hosts'.format(self.clone_url))
 
@@ -60,7 +57,7 @@ class Processor:
         if not self.dry_run:
             os.makedirs(self.vendored_source, exist_ok=True)
 
-    @contextmanager
+    @contextlib.contextmanager
     def discover_snapcraft_yaml(self):
         # Known snapcraft.yaml file locations
         paths = ['snapcraft.yaml', '.snapcraft.yaml', 'snap/snapcraft.yaml']
@@ -96,54 +93,47 @@ class Processor:
             self.prepare_source(['master'], self.vendored_source,
                                 commit='Vendor {}'.format(data['name']))
         for branch in self.branches:
-            self.git.upload_branch(self.branches[branch], branch)
+            self.logger.debug('Uploading {!r}'.format(branch))
+            if self.dry_run:
+                continue
+            self.git.upload_branch(self.branches[branch], branch, self.target)
 
     def process_part(self, part, part_data, data):
-        source = part_data.get('source', '.')
-        if source.startswith('.'):
-            source_copy = os.path.join(self.vendored_source, source)
-            source = os.path.join(self.project_folder, source)
-        elif self.host_not_vendorized(source):
-            source_copy = os.path.join(self.project_folder,
-                                       'parts', part, 'src')
-            self.logger.debug('Source: {!r}'.format(source))
-            if not self.dry_run and not os.path.exists(source_copy):
-                if 'git' in source:
-                    os.makedirs(source_copy)
-                    self.git.clone(source, source_copy)
-                elif os.getenv('SNAP_NAME') != 'vendorize':
-                    with self.chdir(self.project_folder):
-                        subprocess.check_call(['snapcraft', 'pull', part])
-                else:
-                    self.die("Unsupported source {!r}".format(source))
-            repo, branch = self.prepare_source(
-                [data['name'], part], source_copy).split('@')
-            part_data['source'] = repo
-            part_data['source-branch'] = branch
-        else:
-            self.die('Unsupported source {!r}'.format(source))
+        source, source_copy = self.process_part_source(part, part_data)
         plugin = part_data.get('plugin')
         if plugin:
             part_processor = self.load_plugin(
-                plugin, data, part, source, source_copy)
+                plugin, data, part, source.source, source_copy)
             if part_processor:
-                part_processor.process()
-                self.prepare_source(
-                    [data['name'], part], source_copy,
-                    commit='Update requirements')
+                # Plugins may modify the sources
+                source.should_vendor = True
+                if not self.dry_run:
+                    part_processor.process()
             elif plugin not in ['copy', 'dump', 'nil']:
                 self.die("No vendoring for {!r}".format(plugin))
         else:
-            self.die("No vendoring for remote parts")
+            self.die("No vendoring for remote part {!r}".format(part))
+        if source.should_vendor:
+            repo, branch = self.prepare_source(
+                [data['name'], part], source_copy,
+                commit='Vendor {}'.format(part)).split('@')
+            part_data['source'] = repo
+            part_data['source-branch'] = branch
+            if 'source-tag' in part_data:
+                del part_data['source-tag']
 
-    @contextlib.contextmanager
-    def chdir(self, path: str):
-        cwd = os.getcwd()
-        os.chdir(path)
-        try:
-            yield path
-        finally:
-            os.chdir(cwd)
+    def process_part_source(self, part: str, part_data: dict) -> tuple:
+        source = vendorize.source.PartSource(
+            part_data, self.project_folder, self.allowed_hosts)
+        self.logger.debug('Source: {!r}'.format(source.source))
+        if source.type == 'local':
+            source_copy = os.path.join(self.vendored_source, source.source)
+        else:
+            source_copy = os.path.join(self.project_folder,
+                                       'parts', part, 'src')
+            if not self.dry_run:
+                source.fetch(source_copy)
+        return source, source_copy
 
     def load_plugin(self, plugin: str, data: dict, part: str,
                     source: str, copy: str):
@@ -156,31 +146,19 @@ class Processor:
     def die(self, message):
         raise click.ClickException(message)
 
-    def copy_source(self, source, destination):
-        os.makedirs(destination, exist_ok=True)
-        with click.progressbar(os.listdir(path=source), label='Copying folder',
-                               item_show_func=lambda x: x) as bar:
-            for f in bar:
-                if f == 'snap':
-                    continue
-                a = os.path.join(source, f)
-                b = os.path.join(destination, f)
-                if os.path.isdir(a):
-                    shutil.copytree(a, b)
-                else:
-                    shutil.copy(a, b)
+    def copy_source(self, source: str, destination: str):
+        self.logger.debug('Copying {!r} to {!r}'.format(source, destination))
+        # If this is a git repository we can clone it efficiently
+        if os.path.exists(os.path.join(source, '.git')):
+            self.git.clone(source, destination)
+        else:
+            self.die('Cannot copy {!r}'.format(source))
 
     def prepare_source(self, path: list, copy: str,
                        *, init=False, commit: str=None):
         branch = '_'.join(path)
-        source_schema = '{}@{}'.format(self.clone_url, branch)
         self.logger.debug('Preparing {!r}'.format(copy))
         if not self.dry_run:
             self.git.prepare_branch(copy, branch, init=init, commit=commit)
         self.branches[branch] = copy
-        return source_schema
-
-    def host_not_vendorized(self, location):
-        url = urlparse(location)
-        host = url.netloc
-        return host and host not in self.allowed_hosts
+        return '{}@{}'.format(self.clone_url, branch)

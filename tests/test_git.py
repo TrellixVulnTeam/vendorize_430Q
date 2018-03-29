@@ -12,5 +12,5 @@ class GitTestCase(fixture_setup.ProcessorBaseTestCase):
     def test_clone(self, mock_check_call):
         self.git.clone('source', 'folder')
         mock_check_call.assert_has_calls([
-            call(['git', 'clone', 'source', 'folder'])
+            call(['git', 'clone', '--recursive', 'source', 'folder'])
         ])

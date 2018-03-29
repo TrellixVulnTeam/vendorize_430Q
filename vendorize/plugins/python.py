@@ -5,6 +5,7 @@ import shutil
 
 
 import vendorize.plugin
+import vendorize.util
 
 
 class Python(vendorize.plugin.Plugin):
@@ -17,20 +18,20 @@ class Python(vendorize.plugin.Plugin):
         self.python_cache = os.path.join(self.part_dir, 'python-packages')
 
     def process(self):
-        if not self.processor.dry_run:
-            os.makedirs(self.python_cache, exist_ok=True)
-            self.download_packages(self.get_packages())
-            self.unpack_archives()
-            self.prepare_branches()
+        os.makedirs(self.python_cache, exist_ok=True)
+        self.download_packages(self.get_packages())
+        self.unpack_archives()
+        self.prepare_branches()
 
     def get_packages(self) -> list:
         python_packages = self.data.get('python-packages', [])
         requirements = self.data.get('requirements')
         if requirements:
-            if self.processor.host_not_vendorized(requirements):
+            path = os.path.join(self.part_dir, 'src', requirements)
+            if not os.path.exists(path):
                 raise vendorize.plugin.PluginError(
                     'External requirements are not supported')
-            with open(os.path.join(self.source, requirements)) as r:
+            with open(path) as r:
                 for line in r:
                     package = line.strip()
                     # A leading # is a comment, otherwise it's part of a URL
@@ -45,13 +46,12 @@ class Python(vendorize.plugin.Plugin):
         # dependencies that we don't care about here can be safely ignored.
         self.debug('Fetching: {}'.format(', '.join(python_packages)))
         for package in python_packages:
-            if not self.processor.dry_run:
-                # Downloaded wheels/ archives are saved to the current folder
-                pip.main(['download', '--no-binary=:all:', '-q',
-                          '--exists-action=i',  # ignore
-                          '--dest={}'.format(self.python_cache),
-                          '--src={}'.format(self.python_cache)] +
-                         package.split(' '))
+            # Downloaded wheels/ archives are saved to the current folder
+            pip.main(['download', '--no-binary=:all:', '-q',
+                      '--exists-action=i',  # ignore
+                      '--dest={}'.format(self.python_cache),
+                      '--src={}'.format(self.python_cache)] +
+                     package.split(' '))
 
     def unpack_archives(self):
         # Unpack all archives, skip folders of "editable" packages.
@@ -96,10 +96,11 @@ class Python(vendorize.plugin.Plugin):
         setuptools.setup = setup
         try:
             with open(setup_py) as f:
-                with self.processor.chdir(self.source):
+                with vendorize.util.chdir(self.source):
                     exec(f.read())
                     metadata = globals()['metadata']
                     return metadata.get('install_requires', [])
         except Exception as e:
-            raise vendorize.plugin.PluginError(
+            self.debug(
                 'Failed to parse {!r}: {}'.format(setup_py, e))
+            return []
