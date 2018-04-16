@@ -1,8 +1,11 @@
+from testtools.matchers import FileContains
+from unittest.mock import patch
 import click
 import os
+import textwrap
 
 
-import fixture_setup
+from tests import fixture_setup
 
 
 class ProcessorTestCase(fixture_setup.ProcessorBaseTestCase):
@@ -25,6 +28,31 @@ class ProcessorTestCase(fixture_setup.ProcessorBaseTestCase):
 
     def test_process_yaml(self):
         self.make_processor().process_yaml('snap/snapcraft.yaml')
+
+    @patch('subprocess.check_call')
+    def test_yaml_order(self, mock_check_call):
+        contents = textwrap.dedent('''\
+            name: test
+            version: 1.0
+            parts:
+              foo:
+                plugin: nil
+            vendoring:
+            - git.launchpad.net
+            ''')
+        with open(self.snapcraft_yaml, 'w') as f:
+            f.write(contents)
+        processor = self.make_processor(dry_run=False)
+
+        vendored_snap_folder = os.path.join(processor.vendored_source, 'snap')
+        os.makedirs(vendored_snap_folder, exist_ok=True)
+        vendored_snapcraft_yaml = os.path.join(
+            vendored_snap_folder, 'snapcraft.yaml')
+        with open(vendored_snapcraft_yaml, 'w') as f:
+            f.write(contents)
+
+        processor.process_yaml('snap/snapcraft.yaml')
+        self.assertThat(vendored_snapcraft_yaml, FileContains(contents))
 
 
 class PartTestCase(fixture_setup.ProcessorBaseTestCase):

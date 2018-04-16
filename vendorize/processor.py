@@ -17,12 +17,13 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 import click
+from collections import OrderedDict
 import contextlib
 import importlib
 import logging
 import yaml
 import os
-from typing import List
+from typing import Any, Dict, IO, List
 
 
 import vendorize.git
@@ -74,7 +75,7 @@ class Processor:
         if os.path.isabs(path):
             self.die('Path {!r} is not relative'.format(path))
         with open(os.path.join(self.project_folder, path)) as f:
-            data = yaml.load(f)
+            data = self.ordered_yaml_load(f)
             self.logger.info('Processing {!r}'.format(path))
             # Allowed hosts for this snap
             self.allowed_hosts = data.get('vendoring', self.allowed_hosts)
@@ -89,7 +90,7 @@ class Processor:
         if self.dry_run:
             return
         with open(os.path.join(self.vendored_source, path), 'w') as f:
-            yaml.dump(data, f, default_flow_style=False)
+            self.ordered_yaml_dump(data, f, default_flow_style=False)
             self.prepare_source(['master'], self.vendored_source,
                                 commit='Vendor {}'.format(data['name']))
         for branch in self.branches:
@@ -97,6 +98,30 @@ class Processor:
             if self.dry_run:
                 continue
             self.git.upload_branch(self.branches[branch], branch, self.target)
+
+    def ordered_yaml_load(self, stream: IO[str]) -> Dict[str, Any]:
+        class OrderedSafeLoader(yaml.SafeLoader):
+            pass
+
+        def construct_mapping(loader: yaml.Loader, node: yaml.Node):
+            loader.flatten_mapping(node)
+            return OrderedDict(loader.construct_pairs(node))
+        OrderedSafeLoader.add_constructor(
+            yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+            construct_mapping)
+        return yaml.load(stream, OrderedSafeLoader)
+
+    def ordered_yaml_dump(self, data: Dict[str, Any],
+                          stream: IO[str], **kwargs) -> None:
+        class OrderedDumper(yaml.SafeDumper):
+            pass
+
+        def dict_representer(dumper: yaml.Dumper, data: Dict[str, Any]):
+            return dumper.represent_mapping(
+                yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+                data.items())
+        OrderedDumper.add_representer(OrderedDict, dict_representer)
+        yaml.dump(data, stream, OrderedDumper, **kwargs)
 
     def process_part(self, part, part_data, data):
         source, source_copy = self.process_part_source(part, part_data)
