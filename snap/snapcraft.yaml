@@ -28,6 +28,7 @@ parts:
     plugin: nil
     stage-packages:
      - git
+     - gettext-base
 
   bin:
     plugin: dump
