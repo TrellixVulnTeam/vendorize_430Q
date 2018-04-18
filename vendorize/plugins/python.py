@@ -1,6 +1,6 @@
 import os
-import pip
 import setuptools
+import subprocess
 import shutil
 
 
@@ -11,10 +11,6 @@ import vendorize.util
 class Python(vendorize.plugin.Plugin):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        if os.getenv('SNAP_NAME') == 'vendorize':
-            # Override user agent to avoid pip searching /etc for release files
-            pip.download.user_agent = lambda: 'pip/{}'.format(pip.__version__)
-
         self.python_cache = os.path.join(self.part_dir, 'python-packages')
 
     def process(self):
@@ -47,11 +43,18 @@ class Python(vendorize.plugin.Plugin):
         self.debug('Fetching: {}'.format(', '.join(python_packages)))
         for package in python_packages:
             # Downloaded wheels/ archives are saved to the current folder
-            pip.main(['download', '--no-binary=:all:', '-q',
-                      '--exists-action=i',  # ignore
-                      '--dest={}'.format(self.python_cache),
-                      '--src={}'.format(self.python_cache)] +
-                     package.split(' '))
+            try:
+                subprocess.check_call([
+                    'python3', '-m', 'pip',
+                    'download', '--no-binary=:all:', '-q',
+                    '--exists-action=i',  # ignore
+                    '--dest={}'.format(self.python_cache),
+                    '--src={}'.format(self.python_cache)] +
+                    package.split(' '))
+            except subprocess.CalledProcessError as e:
+                # Errors in setup.py due to for example pkg-config being run
+                # can be ignored since we're not looking to build anything.
+                self.debug('Error during download: {!r}'.format(e))
 
     def unpack_archives(self):
         # Unpack all archives, skip folders of "editable" packages.
