@@ -1,5 +1,4 @@
 import os
-import pip
 import setuptools
 import subprocess
 import shutil
@@ -12,15 +11,6 @@ import vendorize.util
 class Python(vendorize.plugin.Plugin):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        if os.getenv('SNAP_NAME') == 'vendorize':
-            # Override user agent to avoid pip searching /etc for release files
-            try:
-                user_agent = 'pip/{}'.format(pip.__version__)
-                pip.download.user_agent = lambda: user_agent
-            except AttributeError:
-                # 10.0.0 changes the API but also fixes the bug
-                pass
-
         self.python_cache = os.path.join(self.part_dir, 'python-packages')
 
     def process(self):
